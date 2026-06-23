@@ -4,6 +4,8 @@ import FileUploader from "~/component/FileUploader";
 import Navbar from "~/component/Navbar";
 import { convertPdfToImage } from "~/lib/pdf2img";
 import { usePuterStore } from "~/lib/puter";
+import { generateUUID } from "~/lib/utils";
+import { prepareInstructions } from "../../constants";
 
 const upload = () => {
   const { auth, isLoading, fs, ai, kv } = usePuterStore();
@@ -39,6 +41,47 @@ const upload = () => {
       return setStatusText("Error: Failed to convert PDF to image");
 
     setStatusText("Uploading the image ...");
+    if (!imageFile.file) {
+      setIsProcessing(false);
+      return setStatusText("Error: Converted image file is null");
+    }
+    const uploadedImage = await fs.upload([imageFile.file]);
+    if (!uploadedImage) return setStatusText("Error Failed to upload image");
+
+    setStatusText("Preparing data ...");
+
+    const uuid = generateUUID();
+
+    const data = {
+      id: uuid,
+      resumePath: uploadedFile.path,
+      imagePath: uploadedImage.path,
+      companyName,
+      jobTitle,
+      jobDescription,
+      feedback: "",
+    };
+
+    await kv.set(`resume:${uuid}`, JSON.stringify(data));
+
+    setStatusText("Analyzing ...");
+
+    const feedback = await ai.feedback(
+      uploadedFile.path,
+      prepareInstructions({ jobTitle, jobDescription }),
+    );
+
+    if (!feedback) return setStatusText("Error: Failed to analyze resume");
+
+    const feedbackText =
+      typeof feedback.message.content === "string"
+        ? feedback.message.content
+        : feedback.message.content[0].text;
+
+    data.feedback = JSON.parse(feedbackText);
+    await kv.set(`resume:${uuid}`, JSON.stringify(data));
+    setStatusText("Analysis complete, redirecting ...");
+    console.log(data);
   };
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
